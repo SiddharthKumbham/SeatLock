@@ -96,3 +96,8 @@ test("login rate limit rejects excessive attempts", async () => {
   for (let i = 0; i < 11; i++) status = (await post("login", { email: "missing@example.test", password })).status;
   assert.equal(status, 429);
 });
+test("registration rate limit bounds password hashing requests", async () => {
+  let status = 0;
+  for (let i = 0; i < 3; i++) status = (await post("register", { name: "A", email: "bad", password: "short" })).status;
+  assert.equal(status, 429);
+});

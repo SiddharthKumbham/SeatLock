@@ -1,0 +1,58 @@
+name: SeatLock checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: seatlock_ci
+          POSTGRES_PASSWORD: seatlock_ci_only
+          POSTGRES_DB: seatlock_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seatlock_ci -d seatlock_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://seatlock_ci:seatlock_ci_only@127.0.0.1:5432/seatlock_ci
+      FRONTEND_ORIGIN: http://127.0.0.1:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix backend
+          npm ci --prefix frontend
+      - name: Migrate and seed isolated CI database
+        run: |
+          npm run migrate --prefix backend
+          npm run seed --prefix backend
+      - name: Typecheck and build
+        run: |
+          npm run typecheck
+          npm run build
+      - name: Database-backed API, auth, booking, and real-time tests
+        run: |
+          npm run test:integration --prefix backend
+          npm run test:auth --prefix backend
+          npm run test:booking --prefix backend
+          npm run test:realtime --prefix backend

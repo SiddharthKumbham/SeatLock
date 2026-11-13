@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowRight, Check, ChevronDown, Clock3, MapPin, Menu, Plus, Popcorn, Search, ShieldCheck, Ticket, X } from "lucide-react";
+import { ArrowDown, ArrowRight, Check, Clock3, MapPin, Menu, Plus, Popcorn, Search, ShieldCheck, Ticket, X } from "lucide-react";
 import AccountPages, { type AuthUser } from "./AccountPages";
 import BookingFlow from "./BookingFlow";
 
@@ -21,6 +21,7 @@ function App() {
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [notice, setNotice] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [route, setRoute] = useState(window.location.pathname);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -50,7 +51,8 @@ function App() {
   const openMovie = (movie: Movie) => setSelectedMovie(movie);
 
   return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="/" aria-label="SeatLock home"><span className="brand-mark"><Ticket size={18}/></span><span>seat<span className="brand-lock">lock</span></span></a><nav className="main-nav"><a className={route === "/" ? "nav-active" : ""} href="/#films">Now showing</a><a href="/#experience">The experience</a><a href="/#about">About us</a></nav><div className="top-actions"><button className="icon-button search-toggle" aria-label="Search films" onClick={() => setSearchOpen(!searchOpen)}><Search size={18}/></button><button className="location-pill"><MapPin size={15}/> <span>New York, NY</span><ChevronDown size={14}/></button>{!authLoading && (user ? <><a className="auth-nav" href="/account">Account</a><button className="auth-nav auth-nav-button" onClick={logout}>Log out</button></> : <><a className="auth-nav" href="/login">Log in</a><a className="auth-nav auth-nav-signup" href="/signup">Sign up</a></>)}<button className="menu-button" aria-label="Open menu"><Menu size={20}/></button></div></header>
+    <header className="topbar"><a className="brand" href="/" aria-label="SeatLock home"><span className="brand-mark"><Ticket size={18}/></span><span>seat<span className="brand-lock">lock</span></span></a><nav className="main-nav"><a className={route === "/" ? "nav-active" : ""} href="/#films">Now showing</a><a href="/#experience">The experience</a><a href="/#about">About us</a></nav><div className="top-actions"><button className="icon-button search-toggle" aria-label="Search films" aria-expanded={searchOpen} onClick={() => setSearchOpen(!searchOpen)}><Search size={18}/></button><span className="location-pill"><MapPin size={15}/> <span>Demo cinema</span></span>{!authLoading && (user ? <><a className="auth-nav" href="/account">Account</a><button className="auth-nav auth-nav-button" onClick={logout}>Log out</button></> : <><a className="auth-nav" href="/login">Log in</a><a className="auth-nav auth-nav-signup" href="/signup">Sign up</a></>)}<button className="menu-button" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="mobile-navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X size={20}/> : <Menu size={20}/>}</button></div></header>
+    {menuOpen && <nav id="mobile-navigation" className="mobile-nav" aria-label="Mobile navigation"><a href="/#films" onClick={() => setMenuOpen(false)}>Now showing</a><a href="/#experience" onClick={() => setMenuOpen(false)}>The experience</a><a href="/#about" onClick={() => setMenuOpen(false)}>About us</a></nav>}
     {searchOpen && <div className="search-bar"><Search size={17}/><input autoFocus placeholder="Search films or genres…" value={query} onChange={(e) => setQuery(e.target.value)}/><button className="icon-button" onClick={() => { setSearchOpen(false); setQuery(""); }} aria-label="Close search"><X size={17}/></button></div>}
     <main id="top">{route === "/" ? <>
       {error && <div className="error-banner" role="alert"><span>{error} Please check the API connection.</span><button onClick={() => { setLoading(true); setError(""); fetchMovies().then(setMovies).catch(() => setError("The SeatLock API is still unavailable." )).finally(() => setLoading(false)); }}>Try again</button></div>}

@@ -9,9 +9,11 @@ type UserRow = { id: string; name: string; email: string; password_hash: string;
 export const authRouter = Router();
 const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false,
   message: { error: "Too many login attempts. Please try again later." } });
+const registerLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false,
+  message: { error: "Too many registration attempts. Please try again later." } });
 const publicUser = (row: UserRow) => ({ id: row.id, name: row.name, email: row.email, createdAt: row.created_at.toISOString() });
 
-authRouter.post("/register", async (req, res, next) => {
+authRouter.post("/register", registerLimit, async (req, res, next) => {
   const input = parseRegistration(req.body);
   if (!input) return res.status(400).json({ error: "Enter a valid name, email, and password of at least 12 characters." });
   try {
