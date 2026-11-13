@@ -6,6 +6,8 @@ import { authRouter } from "./auth/routes.js";
 import { requireSameOrigin } from "./auth/csrf.js";
 import { bookingRouter } from "./booking/routes.js";
 import { BookingError } from "./booking/service.js";
+import { createServer } from "node:http";
+import { attachRealtime, closeRealtime } from "./realtime.js";
 
 export const app = express();
 const port = Number(process.env.PORT) || 4000;
@@ -48,4 +50,21 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   return res.status(unavailable ? 503 : 500).json({ error: unavailable ? "Database unavailable. Please try again later." : "Something went wrong." });
 });
 
-if (process.argv[1]?.endsWith("server.js")) app.listen(port, () => console.log(`SeatLock API listening on http://localhost:${port}`));
+if (process.argv[1]?.endsWith("server.js")) {
+  const httpServer = createServer(app);
+  const io = attachRealtime(httpServer);
+  httpServer.listen(port, () => console.log(`SeatLock API listening on http://localhost:${port}`));
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
+    try {
+      await closeRealtime(io);
+      if (httpServer.listening) await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      await pool.end();
+      console.log("SeatLock API stopped");
+    } catch (error) { console.error("Shutdown error", error); process.exitCode = 1; }
+  };
+  process.once("SIGINT", () => { void shutdown(); });
+  process.once("SIGTERM", () => { void shutdown(); });
+}

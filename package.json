@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "npm run build --prefix backend && concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "build": "npm run build --prefix backend && npm run build --prefix frontend",
-    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend"
+    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend",
+    "test:e2e": "npm run build --prefix backend && playwright test"
   },
-  "devDependencies": { "concurrently": "^9.1.2" }
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "concurrently": "^9.1.2"
+  }
 }

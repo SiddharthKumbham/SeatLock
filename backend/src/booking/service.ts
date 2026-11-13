@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { pool, query } from "../db.js";
+import { publishAvailability } from "../realtime.js";
 
 export class BookingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -12,7 +13,7 @@ async function transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<
   finally { client.release(); }
 }
 type ShowRow = { id: string; auditorium_id: string; base_price: string };
-type HoldRow = { id: string; user_id: string; showtime_id: string; auditorium_id: string; seat_count: number; unit_price: string; status: string; expires_at: Date; effective_status: string };
+type HoldRow = { id: string; user_id: string; showtime_id: string; auditorium_id: string; seat_count: number; unit_price: string; status: string; expires_at: Date; effective_status: string; server_time: Date };
 type SeatRow = { id: string; row_label: string; seat_number: number; status?: string };
 type BookingRow = { id: string; reference: string; showtime_id: string; movie_title: string; starts_at: Date; auditorium_name: string; total_price: string; confirmed_at: Date };
 const mapSeat = (seat: SeatRow) => ({ id: seat.id, rowLabel: seat.row_label, seatNumber: seat.seat_number, label: `${seat.row_label}${seat.seat_number}`, ...(seat.status ? { status: seat.status } : {}) });
@@ -48,35 +49,38 @@ export async function createHold(userId: string, showtimeId: string, seatIds: st
       if (!claim.rowCount) throw new BookingError(409, "One or more seats are no longer available");
     }
   });
+  publishAvailability(showtimeId, "hold_created");
   const result = await holdDetails(userId, id);
   if (!result) throw new Error("Created hold could not be read");
   return result;
 }
 
 export async function holdDetails(userId: string, holdId: string) {
-  const result = await query<HoldRow>(`SELECT *,CASE WHEN status='active' AND expires_at <= clock_timestamp() THEN 'expired' ELSE status END AS effective_status
+  const result = await query<HoldRow>(`SELECT *,clock_timestamp() AS server_time,CASE WHEN status='active' AND expires_at <= clock_timestamp() THEN 'expired' ELSE status END AS effective_status
     FROM seat_holds WHERE id=$1 AND user_id=$2`, [holdId, userId]);
   const hold = result.rows[0];
   if (!hold) return null;
   const seats = await query<SeatRow>(`SELECT s.id,s.row_label,s.seat_number FROM seat_claims c JOIN seats s ON s.id=c.seat_id
     WHERE c.hold_id=$1 AND c.state='held' ORDER BY s.row_label,s.seat_number`, [holdId]);
-  return { id: hold.id, showtimeId: hold.showtime_id, status: hold.effective_status, expiresAt: hold.expires_at.toISOString(),
+  return { id: hold.id, showtimeId: hold.showtime_id, status: hold.effective_status, expiresAt: hold.expires_at.toISOString(), serverTime: hold.server_time.toISOString(),
     seats: seats.rows.map(mapSeat), seatCount: hold.seat_count, unitPrice: Number(hold.unit_price), total: Math.round(Number(hold.unit_price) * 100) * hold.seat_count / 100 };
 }
 
 export async function releaseHold(userId: string, holdId: string) {
-  await transaction(async (client) => {
+  const showtimeId = await transaction(async (client) => {
     const result = await client.query<HoldRow>("SELECT * FROM seat_holds WHERE id=$1 AND user_id=$2 FOR UPDATE", [holdId, userId]);
     const hold = result.rows[0];
     if (!hold) throw new BookingError(404, "Hold not found");
     if (hold.status === "confirmed") throw new BookingError(409, "Confirmed bookings cannot be released");
     await client.query("DELETE FROM seat_claims WHERE hold_id=$1 AND state='held'", [holdId]);
     await client.query("UPDATE seat_holds SET status='released' WHERE id=$1", [holdId]);
+    return hold.showtime_id;
   });
+  publishAvailability(showtimeId, "hold_released");
 }
 
 export async function confirmHold(userId: string, holdId: string) {
-  const bookingId = await transaction(async (client) => {
+  const result = await transaction(async (client) => {
     const result = await client.query<HoldRow>(`SELECT *,CASE WHEN expires_at <= clock_timestamp() THEN 'expired' ELSE status END AS effective_status
       FROM seat_holds WHERE id=$1 AND user_id=$2 FOR UPDATE`, [holdId, userId]);
     const hold = result.rows[0];
@@ -84,7 +88,7 @@ export async function confirmHold(userId: string, holdId: string) {
     if (hold.status === "confirmed") {
       const existing = await client.query<{ id: string }>("SELECT id FROM bookings WHERE hold_id=$1", [holdId]);
       if (!existing.rows[0]) throw new Error("Confirmed hold has no booking");
-      return existing.rows[0].id;
+      return { bookingId: existing.rows[0].id, showtimeId: hold.showtime_id, created: false };
     }
     if (hold.status === "released") throw new BookingError(409, "Hold was released");
     if (hold.effective_status === "expired") throw new BookingError(410, "Hold has expired");
@@ -100,9 +104,10 @@ export async function confirmHold(userId: string, holdId: string) {
       WHERE hold_id=$2 AND state='held'`, [id, holdId]);
     if (updated.rowCount !== hold.seat_count) throw new Error("Booking claim count changed");
     await client.query("UPDATE seat_holds SET status='confirmed' WHERE id=$1", [holdId]);
-    return id;
+    return { bookingId: id, showtimeId: hold.showtime_id, created: true };
   });
-  const booking = await bookingDetails(userId, bookingId);
+  if (result.created) publishAvailability(result.showtimeId, "booking_confirmed");
+  const booking = await bookingDetails(userId, result.bookingId);
   if (!booking) throw new Error("Confirmed booking could not be read");
   return booking;
 }

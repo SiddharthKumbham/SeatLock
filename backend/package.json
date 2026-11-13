@@ -12,7 +12,8 @@
     "seed": "npm run build && node dist/seed.js",
     "test:integration": "npm run build && node --test dist/integration.test.js",
     "test:auth": "npm run build && node --test dist/auth.test.js",
-    "test:booking": "npm run build && node --test dist/booking.test.js"
+    "test:booking": "npm run build && node --test dist/booking.test.js",
+    "test:realtime": "npm run build && node --test dist/realtime.test.js"
   },
   "dependencies": {
     "argon2": "^0.45.2",
@@ -20,13 +21,15 @@
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.4",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.30",
     "@types/pg": "^8.15.5",
+    "socket.io-client": "^4.8.4",
     "typescript": "~5.8.3"
   }
 }
