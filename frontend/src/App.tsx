@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, Check, ChevronDown, Clock3, Film, MapPin, Menu, Plus, Popcorn, Search, ShieldCheck, Ticket, X } from "lucide-react";
+import { ArrowDown, ArrowRight, Check, ChevronDown, Clock3, MapPin, Menu, Plus, Popcorn, Search, ShieldCheck, Ticket, X } from "lucide-react";
 import AccountPages, { type AuthUser } from "./AccountPages";
+import BookingFlow from "./BookingFlow";
 
 type Showtime = { id: string; time: string; format: string; price: number; date: string };
 type Movie = { id: string; title: string; genre: string; rating: string; runtime: string; synopsis: string; image: string; accent: string; showtimes: Showtime[] };
-type Seat = { id: string; rowLabel: string; seatNumber: number; label: string };
 const API = "/api";
 
 async function fetchMovies(): Promise<Movie[]> {
@@ -19,12 +19,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
-  const [selectedShow, setSelectedShow] = useState<Showtime | null>(null);
-  const [showtimes, setShowtimes] = useState<Showtime[]>([]);
-  const [seats, setSeats] = useState<Seat[]>([]);
-  const [bookingLoading, setBookingLoading] = useState(false);
-  const [bookingError, setBookingError] = useState("");
-  const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -48,18 +42,7 @@ function App() {
   const featured = movies[0];
   const filteredMovies = useMemo(() => movies.filter((movie) => movie.title.toLowerCase().includes(query.toLowerCase()) || movie.genre.toLowerCase().includes(query.toLowerCase())), [movies, query]);
 
-  const openMovie = (movie: Movie) => {
-    setSelectedMovie(movie); setSelectedShow(null); setSelectedSeats([]); setShowtimes([]); setSeats([]); setBookingError(""); setBookingLoading(true);
-    fetch(`${API}/showtimes?movieId=${encodeURIComponent(movie.id)}`).then(async (response) => { if (!response.ok) throw new Error("Could not load showtimes."); return response.json(); })
-      .then((payload: { data: Showtime[] }) => setShowtimes(payload.data)).catch((e: Error) => setBookingError(e.message)).finally(() => setBookingLoading(false));
-  };
-  const chooseShow = (show: Showtime) => {
-    setSelectedShow(show); setSelectedSeats([]); setSeats([]); setBookingError(""); setBookingLoading(true);
-    fetch(`${API}/showtimes/${encodeURIComponent(show.id)}/seats`).then(async (response) => { if (!response.ok) throw new Error("Could not load seats."); return response.json(); })
-      .then((payload: { data: { seats: Seat[] } }) => setSeats(payload.data.seats)).catch((e: Error) => setBookingError(e.message)).finally(() => setBookingLoading(false));
-  };
-  const toggleSeat = (seat: string) => setSelectedSeats((current) => current.includes(seat) ? current.filter((item) => item !== seat) : current.length < 6 ? [...current, seat] : current);
-  const confirmSampleSelection = () => { setNotice(`Sample selection: ${selectedSeats.join(", ")} for ${selectedMovie?.title}. No booking was made.`); setSelectedMovie(null); };
+  const openMovie = (movie: Movie) => setSelectedMovie(movie);
 
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="/" aria-label="SeatLock home"><span className="brand-mark"><Ticket size={18}/></span><span>seat<span className="brand-lock">lock</span></span></a><nav className="main-nav"><a className={route === "/" ? "nav-active" : ""} href="/#films">Now showing</a><a href="/#experience">The experience</a><a href="/#about">About us</a></nav><div className="top-actions"><button className="icon-button search-toggle" aria-label="Search films" onClick={() => setSearchOpen(!searchOpen)}><Search size={18}/></button><button className="location-pill"><MapPin size={15}/> <span>New York, NY</span><ChevronDown size={14}/></button>{!authLoading && (user ? <><a className="auth-nav" href="/account">Account</a><button className="auth-nav auth-nav-button" onClick={logout}>Log out</button></> : <><a className="auth-nav" href="/login">Log in</a><a className="auth-nav auth-nav-signup" href="/signup">Sign up</a></>)}<button className="menu-button" aria-label="Open menu"><Menu size={20}/></button></div></header>
@@ -81,10 +64,7 @@ function App() {
     </> : authLoading ? <section className="auth-loading">Loading account…</section> : <AccountPages key={route} route={route} user={user} onUser={setUser} navigate={navigate}/>}</main>
     <footer id="about"><a className="brand footer-brand" href="#top"><span className="brand-mark"><Ticket size={17}/></span><span>seat<span className="brand-lock">lock</span></span></a><span className="footer-note">A better night at the movies starts here.</span><span className="footer-copy">© 2026 SEATLOCK · SAMPLE EXPERIENCE</span></footer>
 
-    {selectedMovie && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelectedMovie(null); }}><section className="booking-modal" role="dialog" aria-modal="true" aria-labelledby="booking-title"><button className="modal-close" aria-label="Close" onClick={() => setSelectedMovie(null)}><X size={19}/></button><div className="modal-poster" style={{ backgroundImage: `linear-gradient(0deg, #151515, transparent 70%), url(${selectedMovie.image})` }}><span className="modal-tag">{selectedMovie.genre}</span></div><div className="modal-body"><div className="modal-heading"><div><p className="film-genre">{selectedMovie.rating} <span className="submeta-dot"/> {selectedMovie.runtime}</p><h2 id="booking-title">{selectedMovie.title}</h2></div><button className="back-link" onClick={() => setSelectedMovie(null)}><ArrowLeft size={14}/> Back</button></div><p className="modal-synopsis">{selectedMovie.synopsis}</p><div className="modal-divider"/><div className="modal-label">SHOWTIMES <span>Sample schedule · {showtimes[0]?.date ?? ""}</span></div>{bookingLoading && !selectedShow && <div className="modal-hint">Loading showtimes…</div>}{bookingError && <div className="modal-hint" role="alert">{bookingError}</div>}<div className="showtime-list">{showtimes.map((show) => <button key={show.id} className={`showtime-chip ${selectedShow?.id === show.id ? "showtime-selected" : ""}`} onClick={() => chooseShow(show)}><b>{show.time}</b><small>{show.format} · ${show.price}</small></button>)}</div>{!bookingLoading && !bookingError && !showtimes.length && <div className="modal-hint">No showtimes are available.</div>}
-      {selectedShow && <div className="seat-picker"><div className="seat-picker-head"><div><div className="modal-label">PICK YOUR SEATS</div><p>Choose up to 6 seats · ${selectedShow.price} each</p></div><span className="sample-badge">SAMPLE ONLY</span></div>{bookingLoading && <div className="modal-hint">Loading seats…</div>}{!bookingLoading && !bookingError && !seats.length && <div className="modal-hint">No seats are configured for this screen.</div>}{seats.length > 0 && <><div className="screen-curve"><span>SCREEN</span></div><div className="seat-grid" aria-label="Seat selection">{[...new Set(seats.map((seat) => seat.rowLabel))].map((row) => <div className="seat-row" key={row}><span className="row-label">{row}</span>{seats.filter((seat) => seat.rowLabel === row).map((seat) => <button key={seat.id} aria-label={`Seat ${seat.label}${selectedSeats.includes(seat.label) ? ", selected" : ""}`} className={`seat ${selectedSeats.includes(seat.label) ? "seat-selected" : ""}`} onClick={() => toggleSeat(seat.label)}>{selectedSeats.includes(seat.label) ? <Check size={11}/> : null}</button>)}<span className="row-label">{row}</span></div>)}</div><div className="seat-legend"><span><i className="legend-seat"/> Seat</span><span><i className="legend-seat legend-selected"/> Selected</span></div><div className="seat-summary"><span>{selectedSeats.length ? `${selectedSeats.length} seat${selectedSeats.length > 1 ? "s" : ""} selected` : "Select seats to continue"}</span><b>${(selectedSeats.length * selectedShow.price).toFixed(2)}</b></div><button className="button button-primary confirm-button" disabled={!selectedSeats.length} onClick={confirmSampleSelection}>Continue <ArrowRight size={15}/></button></>}<p className="demo-disclaimer">Demo only. These are physical seat positions, with no availability or reservation status.</p></div>}
-      {!selectedShow && <div className="modal-hint"><Film size={15}/> Select a showtime to see the sample seating plan.</div>}
-    </div></section></div>}
+    {selectedMovie && <BookingFlow movie={selectedMovie} user={user} onClose={() => setSelectedMovie(null)} onLogin={() => { setSelectedMovie(null); navigate("/login"); }} onAccount={() => { setSelectedMovie(null); navigate("/account"); }}/>}
     {notice && <div className="toast"><Check size={16}/>{notice}<button onClick={() => setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
   </div>;
 }

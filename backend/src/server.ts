@@ -4,6 +4,8 @@ import { pool } from "./db.js";
 import { findMovie, listMovies, listShowtimes, showtimeSeats } from "./repository.js";
 import { authRouter } from "./auth/routes.js";
 import { requireSameOrigin } from "./auth/csrf.js";
+import { bookingRouter } from "./booking/routes.js";
+import { BookingError } from "./booking/service.js";
 
 export const app = express();
 const port = Number(process.env.PORT) || 4000;
@@ -35,10 +37,13 @@ app.get("/api/showtimes/:id/seats", async (req, res, next) => {
     return res.json({ data: layout, source: "postgresql" }); }
   catch (error) { return next(error); }
 });
+app.use("/api", bookingRouter);
 app.use((_req, res) => res.status(404).json({ error: "Route not found" }));
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof BookingError) return res.status(error.status).json({ error: error.message });
   console.error("API error", error);
   const code = (error as { code?: string } | null)?.code;
+  if (code === "40P01" || code === "40001" || code === "23505") return res.status(409).json({ error: "Booking contention. Please retry." });
   const unavailable = code?.startsWith("08") || code === "ECONNREFUSED" || code === "ETIMEDOUT";
   return res.status(unavailable ? 503 : 500).json({ error: unavailable ? "Database unavailable. Please try again later." : "Something went wrong." });
 });

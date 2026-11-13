@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, CalendarDays, LockKeyhole, LogOut, Mail, UserRound } from "lucide-react";
 
 export type AuthUser = { id: string; name: string; email: string; createdAt: string };
+type Booking = { id: string; reference: string; movieTitle: string; startsAt: string; auditorium: string; seats: { label: string; pricePaid: number }[]; total: number; paymentStatus: string };
 type Props = { route: string; user: AuthUser | null; onUser: (user: AuthUser | null) => void; navigate: (path: string) => void };
 
 async function authRequest(path: string, body?: object): Promise<{ user: AuthUser | null }> {
@@ -21,6 +22,19 @@ export default function AccountPages({ route, user, onUser, navigate }: Props) {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(route === "/account");
+  const [bookingsError, setBookingsError] = useState("");
+  useEffect(() => {
+    if (route !== "/account" || !user) return;
+    let active = true;
+    fetch("/api/bookings", { credentials: "same-origin" }).then(async (response) => {
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Could not load bookings."); return payload.data as Booking[];
+    }).then((items) => { if (active) setBookings(items); })
+      .catch((cause) => { if (active) setBookingsError(cause instanceof Error ? cause.message : "Could not load bookings."); })
+      .finally(() => { if (active) setBookingsLoading(false); });
+    return () => { active = false; };
+  }, [route, user?.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
@@ -43,7 +57,7 @@ export default function AccountPages({ route, user, onUser, navigate }: Props) {
   if (route === "/account" && user) return <section className="account-page"><div className="account-wrap">
     <div className="eyebrow section-eyebrow">YOUR SPACE AT SEATLOCK</div><h1>Welcome back,<br/><em>{user.name.split(" ")[0]}.</em></h1>
     <p className="account-intro">Your movie nights will live here. For now, browse the lineup and find your next favorite film.</p>
-    <div className="account-grid"><article className="account-card"><div className="account-card-title"><CalendarDays size={18}/><h2>Your bookings</h2></div><div className="account-empty"><span className="account-empty-icon"><CalendarDays size={26}/></span><h3>No bookings yet</h3><p>Booking functionality is coming in a future phase. You can explore movies and try the sample seat picker today.</p><button className="button button-primary" onClick={() => navigate("/")}>Explore films <ArrowRight size={15}/></button></div></article>
+    <div className="account-grid"><article className="account-card"><div className="account-card-title"><CalendarDays size={18}/><h2>Your bookings</h2></div>{bookingsLoading ? <div className="account-empty">Loading bookings…</div> : bookingsError ? <p className="form-error booking-error" role="alert">{bookingsError}</p> : bookings.length ? <div className="booking-history">{bookings.map((booking) => <div className="booking-history-item" key={booking.id}><div className="booking-history-head"><strong>{booking.movieTitle}</strong><span>{booking.reference}</span></div><p>{new Date(booking.startsAt).toLocaleString()} · {booking.auditorium}</p><p>Seats {booking.seats.map((seat) => seat.label).join(", ")} · ${booking.total.toFixed(2)}</p><small>DEMO CONFIRMATION — NO PAYMENT CHARGED</small></div>)}</div> : <div className="account-empty"><span className="account-empty-icon"><CalendarDays size={26}/></span><h3>No bookings yet</h3><p>Your confirmed demo bookings will appear here. No payment is charged.</p><button className="button button-primary" onClick={() => navigate("/")}>Explore films <ArrowRight size={15}/></button></div>}</article>
     <article className="account-card account-details"><div className="account-card-title"><UserRound size={18}/><h2>Account information</h2></div><dl><dt>FULL NAME</dt><dd>{user.name}</dd><dt>EMAIL ADDRESS</dt><dd>{user.email}</dd><dt>MEMBER SINCE</dt><dd>{new Date(user.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</dd></dl><button className="account-logout" onClick={logout} disabled={busy}><LogOut size={15}/>{busy ? "Signing out…" : "Log out"}</button>{error && <p className="form-error" role="alert">{error}</p>}</article></div>
   </div></section>;
 
