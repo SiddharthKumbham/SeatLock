@@ -85,7 +85,7 @@ test("two browser contexts see holds and bookings, with refresh recovery", async
     if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "04-seat-selection.png") });
     await pageA.getByRole("button", { name: "Seat A1, selected" }).click();
     await pageA.getByRole("button", { name: "Seat A1, available" }).click();
-    await pageA.getByRole("button", { name: "Hold seats for 5 minutes" }).click();
+    await pageA.getByRole("button", { name: "Hold seats for up to 5 minutes" }).click();
     await expect(pageA.getByRole("timer")).toBeVisible();
     await expect(pageB.getByRole("button", { name: "Seat A1, held" })).toBeDisabled({ timeout: 4000 });
 
@@ -96,12 +96,12 @@ test("two browser contexts see holds and bookings, with refresh recovery", async
     await expect(pageB.getByRole("button", { name: "Seat A1, available" })).toBeEnabled({ timeout: 4000 });
 
     await pageB.getByRole("button", { name: "Seat A1, available" }).click();
-    await pageB.getByRole("button", { name: "Hold seats for 5 minutes" }).click();
+    await pageB.getByRole("button", { name: "Hold seats for up to 5 minutes" }).click();
     await expect(pageB.getByRole("timer")).toBeVisible();
     await pageB.getByRole("button", { name: "Release seats" }).click();
 
     await pageA.getByRole("button", { name: "Seat A2, available" }).click();
-    await pageA.getByRole("button", { name: "Hold seats for 5 minutes" }).click();
+    await pageA.getByRole("button", { name: "Hold seats for up to 5 minutes" }).click();
     await pageA.getByRole("button", { name: /Demo Confirmation — No Payment Charged/ }).click();
     await expect(pageA.getByText("You're on the list.")).toBeVisible();
     if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "05-demo-confirmation.png") });
@@ -138,4 +138,28 @@ test("mobile navigation exposes section links", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("link", { name: "The experience" })).toBeVisible();
   await page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("link", { name: "The experience" }).click();
   await expect(page.getByRole("navigation", { name: "Mobile navigation" })).toHaveCount(0);
+});
+
+test("showtime chips show their own UTC dates and close while the modal is open", async ({ browser }) => {
+  const context = await browser.newContext({ timezoneId: "Asia/Kolkata" });
+  try {
+    const page = await context.newPage();
+    await page.route(/\/api\/showtimes\?movieId=/, (route) => route.fulfill({
+      json: { serverTime: "2026-11-13T23:59:57.000Z", data: [
+        { id: showtimeId, startsAt: "2026-11-14T00:00:00.000Z", date: "2026-11-14", time: "12:00 AM", format: "STANDARD", price: 14 },
+        { id: "next-day", startsAt: "2026-11-15T00:00:00.000Z", date: "2026-11-15", time: "12:00 AM", format: "STANDARD", price: 14 },
+      ] },
+    }));
+    await page.goto("/");
+    await page.getByRole("button", { name: `View ${title} details` }).click();
+    await expect(page.getByText("Demo cinema time (UTC)")).toBeVisible();
+    const first = page.getByRole("button", { name: /12:00 AM 2026-11-14/ });
+    const second = page.getByRole("button", { name: /12:00 AM 2026-11-15/ });
+    await expect(first).toBeEnabled();
+    await expect(first).toBeDisabled({ timeout: 6500 });
+    await expect(first).toContainText("Already started");
+    await expect(second).toBeEnabled();
+  } finally {
+    await context.close();
+  }
 });

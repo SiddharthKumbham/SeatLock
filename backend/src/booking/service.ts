@@ -19,13 +19,13 @@ type BookingRow = { id: string; reference: string; showtime_id: string; movie_ti
 const mapSeat = (seat: SeatRow) => ({ id: seat.id, rowLabel: seat.row_label, seatNumber: seat.seat_number, label: `${seat.row_label}${seat.seat_number}`, ...(seat.status ? { status: seat.status } : {}) });
 
 export async function availability(showtimeId: string) {
-  const show = await query<ShowRow>("SELECT id,auditorium_id,base_price FROM showtimes WHERE id=$1", [showtimeId]);
+  const show = await query<ShowRow & { starts_at: Date; server_time: Date }>("SELECT id,auditorium_id,base_price,starts_at,clock_timestamp() AS server_time FROM showtimes WHERE id=$1", [showtimeId]);
   if (!show.rows[0]) throw new BookingError(404, "Showtime not found");
   const seats = await query<SeatRow>(`SELECT s.id,s.row_label,s.seat_number,
     CASE WHEN c.state='booked' THEN 'booked' WHEN c.state='held' AND c.expires_at > clock_timestamp() THEN 'held' ELSE 'available' END AS status
     FROM seats s LEFT JOIN seat_claims c ON c.showtime_id=$1 AND c.seat_id=s.id
     WHERE s.auditorium_id=$2 ORDER BY s.row_label,s.seat_number`, [showtimeId, show.rows[0].auditorium_id]);
-  return { showtimeId, seats: seats.rows.map(mapSeat) };
+  return { showtimeId, startsAt: show.rows[0].starts_at.toISOString(), serverTime: show.rows[0].server_time.toISOString(), seats: seats.rows.map(mapSeat) };
 }
 
 export async function createHold(userId: string, showtimeId: string, seatIds: string[]) {
@@ -39,7 +39,8 @@ export async function createHold(userId: string, showtimeId: string, seatIds: st
     const valid = await client.query<SeatRow>("SELECT id FROM seats WHERE auditorium_id=$1 AND id=ANY($2::bigint[])", [auditoriumId, sorted]);
     if (valid.rows.length !== sorted.length) throw new BookingError(400, "One or more seats are invalid for this showtime");
     const hold = await client.query<{ expires_at: Date }>(`INSERT INTO seat_holds(id,user_id,showtime_id,auditorium_id,seat_count,unit_price,expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp() + interval '5 minutes') RETURNING expires_at`,
+      SELECT $1,$2,$3,$4,$5,$6,LEAST(clock_timestamp() + interval '5 minutes', starts_at)
+      FROM showtimes WHERE id=$3 RETURNING expires_at`,
       [id, userId, showtimeId, auditoriumId, sorted.length, show.rows[0].base_price]);
     for (const seatId of sorted) {
       const claim = await client.query(`INSERT INTO seat_claims(showtime_id,auditorium_id,seat_id,state,hold_id,expires_at)
@@ -94,9 +95,9 @@ export async function confirmHold(userId: string, holdId: string) {
       return { bookingId: existing.rows[0].id, showtimeId: hold.showtime_id, created: false };
     }
     if (hold.status === "released") throw new BookingError(409, "Hold was released");
-    if (hold.effective_status === "expired") throw new BookingError(410, "Hold has expired");
     const timing = await client.query<{ started: boolean }>("SELECT starts_at <= clock_timestamp() AS started FROM showtimes WHERE id=$1", [hold.showtime_id]);
     if (timing.rows[0].started) throw new BookingError(409, "Showtime has already started");
+    if (hold.effective_status === "expired") throw new BookingError(410, "Hold has expired");
     const claims = await client.query<{ seat_id: string }>(`SELECT seat_id FROM seat_claims WHERE hold_id=$1 AND state='held' ORDER BY seat_id FOR UPDATE`, [holdId]);
     if (claims.rows.length !== hold.seat_count) throw new BookingError(409, "Held seats are no longer available");
     const id = randomUUID();
@@ -109,6 +110,12 @@ export async function confirmHold(userId: string, holdId: string) {
       WHERE hold_id=$2 AND state='held'`, [id, holdId]);
     if (updated.rowCount !== hold.seat_count) throw new Error("Booking claim count changed");
     await client.query("UPDATE seat_holds SET status='confirmed' WHERE id=$1", [holdId]);
+    // Seat locks and writes can delay a confirmation beyond its initial timing check.
+    const cutoff = await client.query<{ started: boolean; expired: boolean }>(`SELECT
+      s.starts_at <= statement_timestamp() AS started, h.expires_at <= statement_timestamp() AS expired
+      FROM seat_holds h JOIN showtimes s ON s.id=h.showtime_id WHERE h.id=$1`, [holdId]);
+    if (cutoff.rows[0].started) throw new BookingError(409, "Showtime has already started");
+    if (cutoff.rows[0].expired) throw new BookingError(410, "Hold has expired");
     return { bookingId: id, showtimeId: hold.showtime_id, created: true };
   });
   if (result.created) publishAvailability(result.showtimeId, "booking_confirmed");

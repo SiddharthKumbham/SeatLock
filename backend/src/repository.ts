@@ -1,5 +1,4 @@
 import { query } from "./db.js";
-import { demoMode } from "./config.js";
 
 type MovieRow = { id: string; title: string; description: string; genre: string; duration_minutes: number; poster_url: string; rating: string; accent: string };
 type ShowRow = { id: string; movie_id: string; auditorium_id: string; auditorium_name: string; starts_at: Date; base_price: string; format: string };
@@ -12,13 +11,11 @@ const mapMovie = (row: MovieRow, showtimes: ReturnType<typeof mapShow>[]) => ({ 
   rating: row.rating, runtime: `${Math.floor(row.duration_minutes / 60)}h ${row.duration_minutes % 60}m`, synopsis: row.description,
   image: row.poster_url, accent: row.accent, showtimes });
 export async function listMovies() {
-  const filter = demoMode ? " WHERE s.starts_at > clock_timestamp()" : "";
-  const [movies, shows] = await Promise.all([query<MovieRow>(`${movieSql} ORDER BY created_at,id`), query<ShowRow>(`${showSql}${filter} ORDER BY s.starts_at,s.id`)]);
+  const [movies, shows] = await Promise.all([query<MovieRow>(`${movieSql} ORDER BY created_at,id`), query<ShowRow>(`${showSql} WHERE s.starts_at > statement_timestamp() ORDER BY s.starts_at,s.id`)]);
   return movies.rows.map((movie) => mapMovie(movie, shows.rows.filter((show) => show.movie_id === movie.id).map(mapShow)));
 }
 export async function listShowtimes(movieId: string) {
-  const future = demoMode ? " AND s.starts_at > clock_timestamp()" : "";
-  const result = await query<ShowRow>(`${showSql} WHERE s.movie_id=$1${future} ORDER BY s.starts_at,s.id`, [movieId]);
+  const result = await query<ShowRow>(`${showSql} WHERE s.movie_id=$1 AND s.starts_at > statement_timestamp() ORDER BY s.starts_at,s.id`, [movieId]);
   return result.rows.map(mapShow);
 }
 export async function findMovie(id: string) {

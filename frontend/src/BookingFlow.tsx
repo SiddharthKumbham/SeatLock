@@ -3,7 +3,7 @@ import { ArrowRight, Check, Clock3, X } from "lucide-react";
 import { io } from "socket.io-client";
 import type { AuthUser } from "./AccountPages";
 
-type Showtime = { id: string; time: string; format: string; price: number; date: string };
+type Showtime = { id: string; time: string; format: string; price: number; date: string; startsAt: string };
 type Movie = { id: string; title: string; genre: string; rating: string; runtime: string; synopsis: string; image: string };
 type Seat = { id: string; rowLabel: string; seatNumber: number; label: string; status: "available" | "held" | "booked" };
 type Hold = { id: string; showtimeId: string; status: string; expiresAt: string; serverTime: string; seats: Seat[]; seatCount: number; unitPrice: number; total: number };
@@ -11,15 +11,19 @@ type AvailabilityNotice = { showtimeId: string; reason: "hold_created" | "hold_r
 type Booking = { id: string; reference: string; movieTitle: string; startsAt: string; auditorium: string; seats: { label: string }[]; total: number; paymentStatus: string };
 type Props = { movie: Movie; user: AuthUser | null; onClose: () => void; onLogin: () => void; onAccount: () => void };
 
-async function readJson<T>(response: Response): Promise<T> {
+async function readPayload<T>(response: Response): Promise<{ data: T; serverTime: string }> {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "The request could not be completed.");
-  return payload.data as T;
+  return payload;
+}
+async function readJson<T>(response: Response): Promise<T> {
+  return (await readPayload<T>(response)).data;
 }
 const writeHeaders = { "Content-Type": "application/json", "X-SeatLock-Request": "1" };
 
 export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }: Props) {
   const [showtimes, setShowtimes] = useState<Showtime[]>([]);
+  const [scheduleNow, setScheduleNow] = useState(0);
   const [show, setShow] = useState<Showtime | null>(null);
   const [seats, setSeats] = useState<Seat[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -35,9 +39,27 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
   const activeShow = useRef<string | null>(null);
   const requestSequence = useRef(0);
   const clockOffset = useRef(0);
+  const scheduleClock = useRef<{ serverTime: number; receivedAt: number } | null>(null);
   const restored = useRef(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const savedHoldKey = "seatlock.activeHold";
+
+  function estimatedScheduleTime() {
+    const clock = scheduleClock.current;
+    return clock ? clock.serverTime + performance.now() - clock.receivedAt : 0;
+  }
+  function syncScheduleTime(serverTime: string) {
+    scheduleClock.current = { serverTime: Math.max(Date.parse(serverTime), estimatedScheduleTime()), receivedAt: performance.now() };
+    setScheduleNow(estimatedScheduleTime());
+  }
+  const showStarted = !!show && Date.parse(show.startsAt) <= scheduleNow;
+
+  useEffect(() => {
+    const tick = () => setScheduleNow(estimatedScheduleTime());
+    const timer = window.setInterval(tick, 1000);
+    window.addEventListener("focus", tick);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", tick); };
+  }, []);
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialogRef.current?.focus();
@@ -58,15 +80,21 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/showtimes?movieId=${encodeURIComponent(movie.id)}`).then(readJson<Showtime[]>).then((items) => { if (active) setShowtimes(items); })
+    fetch(`/api/showtimes?movieId=${encodeURIComponent(movie.id)}`).then(readPayload<Showtime[]>).then(({ data, serverTime }) => {
+      if (active) { syncScheduleTime(serverTime); setShowtimes(data); }
+    })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load showtimes."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [movie.id, showtimesRetry]);
   async function refresh(showId: string) {
     const request = ++requestSequence.current;
-    try { const layout = await readJson<{ seats: Seat[] }>(await fetch(`/api/showtimes/${encodeURIComponent(showId)}/availability`));
-      if (activeShow.current === showId && requestSequence.current === request) { setSeats(layout.seats); setError(""); } }
+    try { const layout = await readJson<{ seats: Seat[]; startsAt: string; serverTime: string }>(await fetch(`/api/showtimes/${encodeURIComponent(showId)}/availability`));
+      if (activeShow.current === showId && requestSequence.current === request) {
+        syncScheduleTime(layout.serverTime);
+        setShow((current) => current && { ...current, startsAt: layout.startsAt });
+        setSeats(layout.seats);
+      } }
     catch (cause) { if (activeShow.current === showId && requestSequence.current === request) setError(cause instanceof Error ? cause.message : "Could not refresh seats."); }
   }
   useEffect(() => {
@@ -88,20 +116,24 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
       socket.off("connect_error", onDisconnect); socket.off("availability:changed", onNotice); socket.disconnect(); };
   }, [show?.id]);
   useEffect(() => {
-    if (!user || !showtimes.length || restored.current) return;
+    if (!user || loading || error || restored.current) return;
     restored.current = true;
     try {
       const saved = JSON.parse(sessionStorage.getItem(savedHoldKey) ?? "null") as { movieId?: string; showtimeId?: string; holdId?: string } | null;
       if (!saved || saved.movieId !== movie.id || !saved.holdId) return;
       const item = showtimes.find((candidate) => candidate.id === saved.showtimeId);
-      if (!item) { sessionStorage.removeItem(savedHoldKey); return; }
+      if (!item || Date.parse(item.startsAt) <= estimatedScheduleTime()) {
+        sessionStorage.removeItem(savedHoldKey);
+        setMessage("Your previous showtime is no longer available. Choose another showtime.");
+        return;
+      }
       activeShow.current = item.id; setShow(item); void refresh(item.id);
       fetch(`/api/holds/${saved.holdId}`, { credentials: "same-origin" }).then(readJson<Hold>).then((current) => {
         if (current.status === "active") { clockOffset.current = new Date(current.serverTime).getTime() - Date.now(); setHold(current); setMessage("Your reservation was restored."); }
         else { sessionStorage.removeItem(savedHoldKey); setMessage("Your previous hold is no longer active. Choose seats again."); }
       }).catch(() => { sessionStorage.removeItem(savedHoldKey); setMessage("Your previous hold could not be restored. Choose seats again."); });
     } catch { sessionStorage.removeItem(savedHoldKey); }
-  }, [showtimes, user?.id, movie.id]);
+  }, [showtimes, loading, error, user?.id, movie.id]);
   useEffect(() => {
     if (!hold) return;
     const holdId = hold.id; const showId = hold.showtimeId;
@@ -118,12 +150,13 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((new Date(hold.expiresAt).getTime() - (Date.now() + clockOffset.current)) / 1000));
       setSecondsLeft(remaining);
-      if (remaining === 0) { sessionStorage.removeItem(savedHoldKey); setHold(null); setSelected([]); setMessage("Your five-minute hold expired. Choose available seats again."); void refresh(hold.showtimeId); }
+      if (remaining === 0) { sessionStorage.removeItem(savedHoldKey); setHold(null); setSelected([]); setMessage("Your seat hold expired. Choose an upcoming showtime or available seats."); void refresh(hold.showtimeId); }
     };
     tick(); const timer = window.setInterval(tick, 1000); return () => window.clearInterval(timer);
   }, [hold?.id]);
 
   function chooseShowtime(item: Showtime) {
+    if (Date.parse(item.startsAt) <= estimatedScheduleTime()) return;
     activeShow.current = item.id;
     requestSequence.current++;
     setShow(item); setSeats([]); setSelected([]); setHold(null); setBooking(null); setError(""); setMessage("");
@@ -131,7 +164,7 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
   }
   function toggleSeat(id: string) { setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 6 ? [...current, id] : current); }
   async function createHold() {
-    if (!show || !selected.length) return;
+    if (!show || Date.parse(show.startsAt) <= estimatedScheduleTime() || !selected.length) return;
     if (!user) { onLogin(); return; }
     setBusy(true); setError(""); setMessage("");
     try { const created = await readJson<Hold>(await fetch("/api/holds", { method: "POST", credentials: "same-origin", headers: writeHeaders, body: JSON.stringify({ showtimeId: show.id, seatIds: selected }) }));
@@ -151,7 +184,7 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
     finally { setBusy(false); }
   }
   async function confirm() {
-    if (!hold || secondsLeft <= 0) return;
+    if (!hold || !show || Date.parse(show.startsAt) <= estimatedScheduleTime() || secondsLeft <= 0) return;
     setBusy(true); setError("");
     try { const current = await readJson<Hold>(await fetch(`/api/holds/${hold.id}`, { credentials: "same-origin" }));
       if (current.status !== "active") { sessionStorage.removeItem(savedHoldKey); setHold(null); setMessage("Your hold expired. Choose available seats again."); await refresh(hold.showtimeId); return; }
@@ -170,17 +203,21 @@ export default function BookingFlow({ movie, user, onClose, onLogin, onAccount }
     <div className="modal-body"><div className="modal-heading"><div><p className="film-genre">{movie.rating} · {movie.runtime}</p><h2 id="booking-title">{movie.title}</h2></div></div>
     <p className="modal-synopsis">{movie.synopsis}</p><div className="modal-divider"/>
     {booking ? <div className="booking-success"><span className="success-icon"><Check size={24}/></span><div className="modal-label">DEMO CONFIRMATION — NO PAYMENT CHARGED</div><h3>You're on the list.</h3><p>Reference <strong>{booking.reference}</strong></p><p>{booking.seats.map((seat) => seat.label).join(", ")} · {booking.auditorium} · ${booking.total.toFixed(2)}</p><button className="button button-primary" onClick={onAccount}>View your bookings <ArrowRight size={15}/></button></div> : <>
-      <div className="modal-label">SHOWTIMES <span>{showtimes[0]?.date ?? ""}</span></div>
+      <div className="modal-label">SHOWTIMES <span>Demo cinema time (UTC)</span></div>
       {loading && <div className="modal-hint">Loading showtimes…</div>}
       {error && !show && <button className="retry-button" onClick={() => { setError(""); setLoading(true); setShowtimesRetry((value) => value + 1); }}>Retry showtimes</button>}
-      {!loading && !error && !showtimes.length && <div className="modal-hint">No showtimes are available.</div>}
-      <div className="showtime-list">{showtimes.map((item) => <button key={item.id} disabled={!!hold || busy} className={`showtime-chip ${show?.id === item.id ? "showtime-selected" : ""}`} onClick={() => chooseShowtime(item)}><b>{item.time}</b><small>{item.format} · ${item.price}</small></button>)}</div>
+      {!loading && !error && !showtimes.some((item) => Date.parse(item.startsAt) > scheduleNow) && <div className="modal-hint">No upcoming showtimes are available.</div>}
+      <div className="showtime-list">{showtimes.map((item) => {
+        const started = Date.parse(show?.id === item.id ? show.startsAt : item.startsAt) <= scheduleNow;
+        return <button key={item.id} disabled={started || !!hold || busy} className={`showtime-chip ${show?.id === item.id ? "showtime-selected" : ""}`} onClick={() => chooseShowtime(item)}><b>{item.time}</b><small>{item.date}</small><small>{started ? "Already started" : `${item.format} · $${item.price}`}</small></button>;
+      })}</div>
+      {showStarted && <p className="booking-message" role="status">This showtime has started. Choose another showtime.</p>}
       {message && <p className="booking-message" role="status">{message}</p>}{error && <p className="form-error booking-error" role="alert">{error}</p>}{error && show && <button className="retry-button" onClick={() => { setError(""); void refresh(show.id); }}>Retry availability</button>}
       {show && <div className="seat-picker"><div className="seat-picker-head"><div><div className="modal-label">CHOOSE YOUR SEATS</div><p>Up to 6 seats · {show.format}</p></div>{hold ? <span className="hold-timer" role="timer" aria-label={`${clock} remaining on your hold`} aria-live="off"><Clock3 size={14}/>{clock}</span> : <span className="sample-badge" role="status">{liveState === "live" ? "LIVE AVAILABILITY" : "RECONNECTING · POLLING BACKUP"}</span>}</div>
         {!seats.length && <div className="modal-hint">Loading seats…</div>}
-        {seats.length > 0 && <><div className="screen-curve"><span>SCREEN</span></div><div className="seat-grid" aria-label="Seat selection">{[...new Set(seats.map((seat) => seat.rowLabel))].map((row) => <div className="seat-row" key={row}><span className="row-label">{row}</span>{seats.filter((seat) => seat.rowLabel === row).map((seat) => <button key={seat.id} aria-label={`Seat ${seat.label}, ${selected.includes(seat.id) ? "selected" : seat.status}`} disabled={!!hold || seat.status !== "available"} className={`seat ${selected.includes(seat.id) ? "seat-selected" : seat.status === "booked" ? "seat-booked" : seat.status === "held" ? "seat-occupied" : ""}`} onClick={() => toggleSeat(seat.id)}>{selected.includes(seat.id) ? <Check size={11}/> : null}</button>)}<span className="row-label">{row}</span></div>)}</div>
+        {seats.length > 0 && <><div className="screen-curve"><span>SCREEN</span></div><div className="seat-grid" aria-label="Seat selection">{[...new Set(seats.map((seat) => seat.rowLabel))].map((row) => <div className="seat-row" key={row}><span className="row-label">{row}</span>{seats.filter((seat) => seat.rowLabel === row).map((seat) => <button key={seat.id} aria-label={`Seat ${seat.label}, ${selected.includes(seat.id) ? "selected" : seat.status}`} disabled={showStarted || !!hold || seat.status !== "available"} className={`seat ${selected.includes(seat.id) ? "seat-selected" : seat.status === "booked" ? "seat-booked" : seat.status === "held" ? "seat-occupied" : ""}`} onClick={() => toggleSeat(seat.id)}>{selected.includes(seat.id) ? <Check size={11}/> : null}</button>)}<span className="row-label">{row}</span></div>)}</div>
           <div className="seat-legend"><span><i className="legend-seat"/> Available</span><span><i className="legend-seat legend-selected"/> Selected</span><span><i className="legend-seat legend-taken"/> Held</span><span><i className="legend-seat legend-booked"/> Booked</span></div></>}
-        {hold ? <><div className="seat-summary"><span>Held: {hold.seats.map((seat) => seat.label).join(", ")}</span><b>${hold.total.toFixed(2)}</b></div><p className="hold-note">Seats are held until {new Date(hold.expiresAt).toLocaleTimeString()}. No payment will be charged.</p><button className="button button-primary confirm-button" disabled={busy || secondsLeft <= 0} onClick={() => void confirm()}>{busy ? "Please wait…" : "Demo Confirmation — No Payment Charged"} <ArrowRight size={15}/></button><button className="release-button" disabled={busy} onClick={() => void release()}>Release seats</button></> : <><div className="seat-summary"><span>{selectedLabels.length ? selectedLabels.join(", ") : "Select seats to continue"}</span><b>{selected.length ? `Est. $${(selected.length * show.price).toFixed(2)}` : "$0.00"}</b></div><button className="button button-primary confirm-button" disabled={!selected.length || busy} onClick={() => void createHold()}>{busy ? "Checking seats…" : user ? "Hold seats for 5 minutes" : "Log in to hold seats"} <ArrowRight size={15}/></button></>}
+        {hold ? <><div className="seat-summary"><span>Held: {hold.seats.map((seat) => seat.label).join(", ")}</span><b>${hold.total.toFixed(2)}</b></div><p className="hold-note">Seats are held until {new Date(hold.expiresAt).toLocaleTimeString("en-US", { timeZone: "UTC", timeZoneName: "short", hour: "numeric", minute: "2-digit", second: "2-digit" })}. No payment will be charged.</p><button className="button button-primary confirm-button" disabled={showStarted || busy || secondsLeft <= 0} onClick={() => void confirm()}>{busy ? "Please wait…" : "Demo Confirmation — No Payment Charged"} <ArrowRight size={15}/></button><button className="release-button" disabled={busy} onClick={() => void release()}>Release seats</button></> : <><div className="seat-summary"><span>{selectedLabels.length ? selectedLabels.join(", ") : "Select seats to continue"}</span><b>{selected.length ? `Est. $${(selected.length * show.price).toFixed(2)}` : "$0.00"}</b></div><button className="button button-primary confirm-button" disabled={showStarted || !selected.length || busy} onClick={() => void createHold()}>{busy ? "Checking seats…" : user ? "Hold seats for up to 5 minutes" : "Log in to hold seats"} <ArrowRight size={15}/></button></>}
         <p className="demo-disclaimer">Availability refreshes every 8 seconds. A hold or booking is final only when the server confirms it.</p>
       </div>}
     </>}

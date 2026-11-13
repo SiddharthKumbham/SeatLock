@@ -162,12 +162,70 @@ test("started showtimes reject new holds and confirmation", async () => {
     const response = await post("/api/holds", { showtimeId: crossingId, seatIds: [seats[0]] }, cookies[0]);
     assert.equal(response.status, 201);
     const created = await data(response);
-    await pool.query("UPDATE showtimes SET starts_at=clock_timestamp()-interval '1 minute' WHERE id=$1", [crossingId]);
+    const blocker = await pool.connect();
+    let confirmation: Promise<Response> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      const { rows: [{ pid }] } = await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      await blocker.query("SELECT 1 FROM seat_claims WHERE hold_id=$1 FOR UPDATE", [created.id]);
+      confirmation = post(`/api/holds/${created.id}/confirm`, {}, cookies[0]);
+      let blocked = false;
+      for (let attempt = 0; attempt < 100 && !blocked; attempt++) {
+        const result = await pool.query("SELECT 1 FROM pg_stat_activity WHERE query LIKE 'SELECT seat_id FROM seat_claims%' AND $1::int = ANY(pg_blocking_pids(pid))", [pid]);
+        blocked = !!result.rowCount;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.ok(blocked, "Confirmation should reach the seat lock before the show starts");
+      await pool.query("UPDATE showtimes SET starts_at=clock_timestamp() WHERE id=$1", [crossingId]);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      if (confirmation) await confirmation;
+    }
+    assert.equal((await confirmation!).status, 409);
+    assert.equal((await pool.query("SELECT 1 FROM bookings WHERE hold_id=$1", [created.id])).rowCount, 0);
     assert.equal((await post(`/api/holds/${created.id}/confirm`, {}, cookies[0])).status, 409);
     assert.equal((await release(created.id, cookies[0])).status, 204);
   } finally {
     await pool.query("DELETE FROM seat_claims WHERE showtime_id=ANY($1::text[])", [[pastId, crossingId]]);
     await pool.query("DELETE FROM seat_holds WHERE showtime_id=ANY($1::text[])", [[pastId, crossingId]]);
     await pool.query("DELETE FROM showtimes WHERE id=ANY($1::text[])", [[pastId, crossingId]]);
+  }
+});
+
+test("UTC serialization and booking cutoff preserve confirmed bookings", async () => {
+  const id = `cutoff-${tag}`;
+  await pool.query(`INSERT INTO showtimes(id,movie_id,auditorium_id,starts_at,base_price,format)
+    VALUES ($1,'afterlight',$2,'2026-11-14 00:45:00+05:30'::timestamptz,10,'STANDARD')`, [id, auditoriumId]);
+  try {
+    const { showtime } = await data(await fetch(`${base}/api/showtimes/${id}/seats`));
+    assert.equal(showtime.startsAt, "2026-11-13T19:15:00.000Z");
+    assert.equal(showtime.date, "2026-11-13");
+    assert.equal(showtime.time, "7:15 PM");
+
+    await pool.query("UPDATE showtimes SET starts_at=clock_timestamp()+interval '2 minutes' WHERE id=$1", [id]);
+    const response = await post("/api/holds", { showtimeId: id, seatIds: [seats[2]] }, cookies[0]);
+    assert.equal(response.status, 201);
+    const created = await data(response);
+    const available = await data(await fetch(`${base}/api/showtimes/${id}/availability`));
+    assert.equal(created.expiresAt, available.startsAt);
+    const confirmation = await post(`/api/holds/${created.id}/confirm`, {}, cookies[0]);
+    assert.equal(confirmation.status, 200);
+    const booked = await data(confirmation);
+
+    await pool.query("UPDATE showtimes SET starts_at=statement_timestamp() WHERE id=$1", [id]);
+    const late = await post("/api/holds", { showtimeId: id, seatIds: [seats[3]] }, cookies[0]);
+    assert.equal(late.status, 409);
+    assert.match((await late.json()).error, /already started/);
+    const shows = await data(await fetch(`${base}/api/showtimes?movieId=afterlight`));
+    assert.ok(!shows.some((show: { id: string }) => show.id === id));
+    const retry = await post(`/api/holds/${created.id}/confirm`, {}, cookies[0]);
+    assert.equal(retry.status, 200);
+    assert.equal((await data(retry)).id, booked.id);
+    assert.equal((await data(await fetch(`${base}/api/bookings/${booked.id}`, { headers: { Cookie: cookies[0] } }))).id, booked.id);
+  } finally {
+    for (const table of ["booking_seats", "seat_claims", "bookings", "seat_holds", "showtimes"]) {
+      await pool.query(`DELETE FROM ${table} WHERE ${table === "showtimes" ? "id" : "showtime_id"}=$1`, [id]);
+    }
   }
 });

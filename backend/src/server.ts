@@ -37,7 +37,8 @@ app.get("/api/showtimes", async (req, res, next) => {
   try { const movieId = typeof req.query.movieId === "string" ? req.query.movieId : "";
     if (!movieId) return res.status(400).json({ error: "movieId is required" });
     if (!await findMovie(movieId)) return res.status(404).json({ error: "Movie not found" });
-    return res.json({ data: await listShowtimes(movieId), movieId, source: "postgresql" }); }
+    const { rows: [{ now }] } = await pool.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+    return res.set("Cache-Control", "no-store").json({ data: await listShowtimes(movieId), movieId, source: "postgresql", serverTime: now.toISOString() }); }
   catch (error) { return next(error); }
 });
 app.get("/api/showtimes/:id/seats", async (req, res, next) => {

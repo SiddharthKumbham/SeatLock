@@ -9,7 +9,7 @@ const uuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 const seatId = (value: unknown): value is string => typeof value === "string" && /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
 
 bookingRouter.get("/showtimes/:id/availability", async (req, res) => {
-  res.json({ data: await availability(String(req.params.id)) });
+  res.set("Cache-Control", "no-store").json({ data: await availability(String(req.params.id)) });
 });
 bookingRouter.use("/holds", requireAuth);
 bookingRouter.post("/holds", requireSameOrigin, async (req, res) => {

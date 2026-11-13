@@ -42,7 +42,7 @@ These are instructions for a future deployment, not actions already performed.
 | `DATABASE_URL` | Yes | Private PostgreSQL URL supplied by a Railway service reference |
 | `NODE_ENV` | Yes: `production` | Enables static asset serving, one-hop proxy trust, and Secure cookies |
 | `FRONTEND_ORIGIN` | Yes | Exact HTTPS public origin for CORS, CSRF, and Socket.IO origin checks |
-| `DEMO_MODE` | Yes for this portfolio demo: `true` | Show only future showtimes and refresh fictional schedule every six hours |
+| `DEMO_MODE` | Yes for this portfolio demo: `true` | Seed and refresh the fictional schedule every six hours |
 | `DATABASE_SSL_MODE` | Optional | `disable` for the encrypted Railway private network, or `verify-full` with a trusted CA where end-to-end PostgreSQL TLS is required |
 | `DATABASE_CA_CERT` | Only for a custom CA | PEM CA certificate text for `verify-full`; keep it in service variables |
 | `PORT` | Provider-supplied | Express listens on the assigned port; do not hardcode a Railway port |
@@ -57,7 +57,7 @@ The browser uses one HTTPS origin for static files, API calls, and WebSockets. I
 
 ## Demo data and schedule
 
-`node backend/dist/seed.js` adds four fictional movies, physical seats, and two future UTC days of showtimes with deterministic `demo-...` IDs. Rerunning it does not duplicate existing rows. With `DEMO_MODE=true`, startup applies migrations and seeds the fictional catalog before accepting traffic; a six-hour timer keeps two future days populated. The API omits started showtimes from the demo catalog. Historical showtimes and bookings remain stored. No cleanup task or destructive update is involved.
+`node backend/dist/seed.js` adds four fictional movies, physical seats, and two future UTC days of showtimes with deterministic `demo-...` IDs. Rerunning it does not duplicate existing rows. With `DEMO_MODE=true`, startup applies migrations and seeds the fictional catalog before accepting traffic; a six-hour timer keeps two future days populated. The demo cinema uses UTC year-round. Seed times are interpreted as UTC, PostgreSQL stores absolute instants in timestamptz, and APIs return ISO 8601 UTC timestamps with a Z suffix. The UI labels UTC and shows the date on each showtime. The catalog and showtime lists omit started shows in every mode. The backend closes holds and new confirmations when PostgreSQL reaches the showtime start, and a hold expires at the earlier of five minutes or the showtime start. Confirmed bookings remain readable and repeat confirmations return the original booking. Historical showtimes and bookings remain stored. No cleanup task or destructive update is involved.
 
 The seed is intended **only** for this fictional portfolio demonstration. Do not run it against a database containing a real cinema catalog. To check rolling behavior locally without changing the existing development database, use a separately named disposable PostgreSQL database.
 
