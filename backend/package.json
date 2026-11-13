@@ -1,0 +1,9 @@
+{
+  "name": "seatlock-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "node --watch dist/server.js", "build": "tsc -p tsconfig.json", "start": "node dist/server.js", "typecheck": "tsc --noEmit -p tsconfig.json", "migrate": "npm run build && node dist/migrate.js", "seed": "npm run build && node dist/seed.js", "test:integration": "npm run build && node --test dist/integration.test.js" },
+  "dependencies": { "cors": "^2.8.5", "dotenv": "^16.6.1", "express": "^5.1.0", "pg": "^8.16.3" },
+  "devDependencies": { "@types/cors": "^2.8.17", "@types/express": "^5.0.3", "@types/node": "^22.15.30", "@types/pg": "^8.15.5", "typescript": "~5.8.3" }
+}
