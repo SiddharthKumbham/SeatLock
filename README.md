@@ -1,6 +1,10 @@
 # SeatLock
 
-**A movie ticket booking portfolio application built around a PostgreSQL seat claim.** SeatLock lets visitors browse sample films, sign in, hold seats for five minutes, and complete a **demo confirmation with no payment charged**. Socket.IO keeps two browsers informed while PostgreSQL decides who owns each seat.
+**[Live Demo](https://seatlock-production-1d25c8ef.up.railway.app)** · [GitHub Repository](https://github.com/SiddharthKumbham/SeatLock) · [Screenshots](#screenshots) · [Local Setup](#postgresql-development-setup) · [Tests](#checks)
+
+**A movie ticket booking portfolio project that prevents double booking with PostgreSQL.** Browse sample films, sign in, reserve seats, and complete a demo booking. Socket.IO updates seat availability across browsers.
+
+**Demo bookings only.** SeatLock does not process real payments or charge you for confirming a booking.
 
 ## The problem
 
@@ -49,9 +53,9 @@ flowchart LR
 
 The frontend fetches authoritative data from the API. Socket events tell browsers when to refetch; they do not grant seat ownership. `users` own `auth_sessions`, `seat_holds`, and `bookings`. `movies` have `showtimes`; each showtime uses one `auditorium`, which owns physical `seats`. `seat_claims` has one row per showtime and seat, and `booking_seats` stores the booking-time price. Composite foreign keys require claimed seats to belong to the showtime's auditorium. See the numbered SQL files in `backend/migrations`.
 
-## Deployment preparation
+## Deployment
 
-The production build serves React, `/api`, and Socket.IO from one Express origin. A single Railway app service with a private PostgreSQL service is the proposed hosting shape; **nothing has been deployed**. See [the deployment guide](docs/DEPLOYMENT.md) for commands, variables, TLS and cookie settings, backups, recovery, costs, and remaining verification. The existing Vite proxy remains the local development path.
+The live demo runs on Railway. Express serves React, `/api`, and Socket.IO from one origin. Local development uses the Vite proxy. See [the deployment guide](docs/DEPLOYMENT.md) for commands, variables, TLS and cookie settings, backups, recovery, and costs.
 
 ## PostgreSQL development setup
 
@@ -179,7 +183,7 @@ The Edge browser test starts its own SeatLock servers on ports 42117 and 52117, 
 
 **Recorded on 2026-11-13 against a local PostgreSQL 17 container:** backend and frontend typechecks and production build passed; API **4/4**, auth **9/9**, booking **7/7**, real-time **5/5**, Edge E2E **2/2** passed. Two concurrent users produced **one hold and one conflict** for one seat. Twenty parallel hold requests produced **one hold and nineteen conflicts**. Twenty parallel hold-to-confirm workflows produced **one confirmed booking and nineteen conflicts** for one physical seat. Two concurrent confirmations of a multi-seat hold produced **two successful idempotent responses, one booking row, and two booked seat rows**. Real-time tests verified that two clients receive committed hold and release notices, an unrelated room receives none, a reconnecting client refetches booked state, and expiry is visible without an event. The Edge test covered registration, live seat changes, release, refresh restoration, confirmation, history, logout/login, and network reconnect. These are recorded test results, not throughput benchmarks or a guarantee for an untested deployment.
 
-Phase 5B-2 preparation reran the checks against a disposable database: API **4/4**, auth **9/9**, booking **8/8**, real-time **5/5**, and Edge E2E **2/2** passed. The additional booking test rejects holds and confirmations after a showtime starts. The clean deployment build and a local production-mode HTTP/Socket.IO smoke test also passed. See [deployment verification details](docs/DEPLOYMENT.md#local-verification-without-cloud-resources). No public HTTPS deployment has been tested.
+Phase 5B-2 preparation reran the checks against a disposable database: API **4/4**, auth **9/9**, booking **8/8**, real-time **5/5**, and Edge E2E **2/2** passed. The additional booking test rejects holds and confirmations after a showtime starts. The clean deployment build and a local production-mode HTTP/Socket.IO smoke test also passed. See [local deployment verification details](docs/DEPLOYMENT.md#local-verification-without-cloud-resources).
 
 ## Current limitations and future work
 
