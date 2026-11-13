@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
+import { safeErrorDetails } from "./diagnostics.js";
 
 export async function migrate() {
   const directory = fileURLToPath(new URL("../migrations/", import.meta.url));
@@ -26,7 +27,7 @@ export async function migrate() {
 
 if (process.argv[1]?.endsWith("migrate.js")) {
   migrate().catch((error: unknown) => {
-    console.error("Database migration failed", { code: (error as NodeJS.ErrnoException).code ?? "unknown", kind: error instanceof Error ? error.name : "unknown" });
+    console.error("Database migration failed", safeErrorDetails(error));
     process.exitCode = 1;
   }).finally(() => pool.end());
 }

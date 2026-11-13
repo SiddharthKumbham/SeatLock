@@ -56,3 +56,4 @@ jobs:
           npm run test:auth --prefix backend
           npm run test:booking --prefix backend
           npm run test:realtime --prefix backend
+          npm run test:diagnostics --prefix backend

@@ -1,6 +1,6 @@
 # SeatLock deployment preparation
 
-This is a preparation guide. No Railway project, cloud database, domain, or billing resource is created by this repository. Booking confirmation remains a **demo with no payment charged**.
+This guide describes the existing Railway deployment configuration. The repository does not create cloud resources or configure billing. Booking confirmation remains a **demo with no payment charged**.
 
 ## Recommended architecture
 
@@ -29,7 +29,7 @@ These are instructions for a future deployment, not actions already performed.
    | Start | `npm run start:deploy` |
    | Health check | `/api/health` |
 
-   `build:deploy` installs the backend and frontend lockfile dependencies and builds both. The pre-deploy commands use the built JavaScript, run before the new app starts, and must succeed. Migrations run in numbered transactions with a transaction-scoped PostgreSQL advisory lock, so overlapping deployments cannot apply the same version concurrently. The seed is idempotent and contains fictional films only. Review schema changes and take a database backup before a deployment that adds a migration.
+   `build:deploy` installs the backend and frontend lockfile dependencies and builds both. The pre-deploy commands use the built JavaScript, run before the new app starts, and must succeed when Railway loads this config. Startup also applies the same versioned migrations and, when `DEMO_MODE=true`, the idempotent fictional seed. This protects fresh databases when a pre-deploy step was not configured or was skipped; it does not replace checking the pre-deploy logs. Migrations run in numbered transactions with a transaction-scoped PostgreSQL advisory lock, so overlapping starts cannot apply the same version concurrently. Review schema changes and take a database backup before a deployment that adds a migration.
 
 4. Assign an HTTPS domain to the application service. Set `FRONTEND_ORIGIN` to **that exact origin** (scheme and host, plus port only if nonstandard). Do not include a trailing slash or path. The production server refuses to start with an HTTP origin or a missing origin.
 5. Configure Railway service variables. Use a reference to the PostgreSQL service's private `DATABASE_URL`, for example `${{Postgres.DATABASE_URL}}` when the database service is named `Postgres`. Do not paste a connection string into GitHub or commit an `.env` file. Railway documents [reference variables](https://docs.railway.com/variables).
@@ -57,9 +57,17 @@ The browser uses one HTTPS origin for static files, API calls, and WebSockets. I
 
 ## Demo data and schedule
 
-`node backend/dist/seed.js` adds four fictional movies, physical seats, and two future UTC days of showtimes with deterministic `demo-...` IDs. Rerunning it does not duplicate existing rows. With `DEMO_MODE=true`, startup checks the database and ensures the future schedule exists before accepting traffic; a six-hour timer keeps two future days populated. The API omits started showtimes from the demo catalog. Historical showtimes and bookings remain stored. No cleanup task or destructive update is involved.
+`node backend/dist/seed.js` adds four fictional movies, physical seats, and two future UTC days of showtimes with deterministic `demo-...` IDs. Rerunning it does not duplicate existing rows. With `DEMO_MODE=true`, startup applies migrations and seeds the fictional catalog before accepting traffic; a six-hour timer keeps two future days populated. The API omits started showtimes from the demo catalog. Historical showtimes and bookings remain stored. No cleanup task or destructive update is involved.
 
 The seed is intended **only** for this fictional portfolio demonstration. Do not run it against a database containing a real cinema catalog. To check rolling behavior locally without changing the existing development database, use a separately named disposable PostgreSQL database.
+
+## Railway startup troubleshooting
+
+The first attempted Railway startup reported PostgreSQL code `42P01` (missing table). A second attempt after adding only `npm run migrate --prefix backend` in the dashboard reported a generic `Error`. Both failures were reproduced locally: a fresh database reached the demo schedule query before tables existed; a migrations-only database then lacked the demo auditoriums. The current startup sequence checks connectivity, applies migrations, seeds when `DEMO_MODE=true`, attaches Socket.IO, and starts HTTP. If it fails, the log identifies the stage, error type, redacted message, PostgreSQL code, and a few stack frames. It does not print the connection string.
+
+The checked-in `railway.json` already declares **both** migration and seed commands. [Railway's config-as-code reference](https://docs.railway.com/config-as-code/reference) says code settings override dashboard settings when that file is loaded. Inspect the failed deployment's **effective settings** and pre-deploy logs to establish whether Railway read `/railway.json`, ran both commands, and used the repository root (`/`) as the service root directory. The dashboard's migration-only command does not seed. If a command is needed in the dashboard, prefer the built JavaScript commands shown above; `npm run migrate --prefix backend` recompiles TypeScript and depends on build tools being present in the runtime image. [Railway pre-deploy commands](https://docs.railway.com/deployments/pre-deploy-command) run in a separate container with service variables and private-network access, and a failure should stop the deployment.
+
+Do not paste the `DATABASE_URL` value into logs or issues. Confirm only that it references the intended private PostgreSQL service, that `NODE_ENV=production`, `DEMO_MODE=true`, and that `FRONTEND_ORIGIN` is exactly the HTTPS public origin. An "Online" database badge alone does not establish that the app is using its database. A `42P01` from the seed stage does show that PostgreSQL accepted a connection. If the new startup still fails, share the **redacted** startup stage/message/code/stack and the nonsecret effective build, pre-deploy, start, root-directory, and config-file settings.
 
 ## Backup, restore, and rollback
 
@@ -95,6 +103,8 @@ The existing Vite workflow remains available through `npm run dev`; it continues
 
 **Local preparation verification on 2026-11-13:** `npm run build:deploy` and both TypeScript checks passed. Against a disposable PostgreSQL database, migrations 001–003 applied, two seed runs each left 26 rolling showtimes, API tests passed 4/4, authentication 9/9, booking 8/8, real-time 5/5, and Edge browser 2/2. A production-mode local HTTP smoke test returned 200 for the homepage, login page, built asset, and health endpoint; all 12 Afterlight showtimes returned by the demo API were future-dated; registration set `Secure`, `HttpOnly`, and `SameSite=Lax`; a wrong origin returned 403; unknown API returned 404; and a Socket.IO client joined a showtime room. The disposable database was removed afterward. Public HTTPS and Railway deployment have **not** been tested.
 
+**Railway startup fix verification on 2026-11-13:** A clean disposable database reproduced `42P01`; applying migrations alone reproduced the generic `Error`. With the startup fix, a separate empty database automatically applied all three migrations, seeded four fictional movies and 26 rolling showtimes, and returned a connected `/api/health`. Seed reruns kept those counts unchanged. Backend and frontend typechecks, production build, API 4/4, auth 9/9, booking 8/8 (including 20 parallel contenders), real-time 5/5, and diagnostic redaction 1/1 passed locally. Both disposable databases were removed. This does not verify Railway's effective settings or a successful public HTTPS deployment.
+
 ## Known limits and costs
 
-No public HTTPS deployment or Railway build has been tested yet. Railway's plan terms, usage, volume, network egress, backup, and optional paid features can change; inspect the [current pricing](https://docs.railway.com/pricing/plans) before deployment. The default PostgreSQL service is a single node; high availability, backups, and point-in-time recovery require deliberate configuration. The app is prepared for one backend instance. Scaling out requires a distributed Socket.IO adapter and shared rate limiting. This portfolio demo has no real payments, refunds, ticket scanning, email verification, or production operations runbook beyond this preparation guide.
+A Railway deployment has been attempted but has not been verified healthy over public HTTPS. Railway's plan terms, usage, volume, network egress, backup, and optional paid features can change; inspect the [current pricing](https://docs.railway.com/pricing/plans) before deployment. The default PostgreSQL service is a single node; high availability, backups, and point-in-time recovery require deliberate configuration. The app is prepared for one backend instance. Scaling out requires a distributed Socket.IO adapter and shared rate limiting. This portfolio demo has no real payments, refunds, ticket scanning, email verification, or production operations runbook beyond this preparation guide.

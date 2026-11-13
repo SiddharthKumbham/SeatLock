@@ -1,6 +1,7 @@
 import { movies } from "./data.js";
 import { pool } from "./db.js";
 import type { PoolClient } from "pg";
+import { safeErrorDetails } from "./diagnostics.js";
 
 function startTime(time: string, day = new Date()): Date {
   const [clock, period] = time.split(" ");
@@ -62,11 +63,11 @@ export async function seed() {
     }
     await insertRollingShowtimes(client);
     await client.query("COMMIT");
-    console.log("Development seed complete (existing rows preserved).");
+    console.log("Demo seed complete (existing rows preserved).");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 }
 if (process.argv[1]?.endsWith("seed.js")) seed().catch((error: unknown) => {
-  console.error("Demo seed failed", { code: (error as NodeJS.ErrnoException).code ?? "unknown", kind: error instanceof Error ? error.name : "unknown" });
+  console.error("Demo seed failed", safeErrorDetails(error));
   process.exitCode = 1;
 }).finally(() => pool.end());

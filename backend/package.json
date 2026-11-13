@@ -13,7 +13,8 @@
     "test:integration": "npm run build && node --test dist/integration.test.js",
     "test:auth": "npm run build && node --test dist/auth.test.js",
     "test:booking": "npm run build && node --test dist/booking.test.js",
-    "test:realtime": "npm run build && node --test dist/realtime.test.js"
+    "test:realtime": "npm run build && node --test dist/realtime.test.js",
+    "test:diagnostics": "npm run build && node --test dist/diagnostics.test.js"
   },
   "dependencies": {
     "argon2": "^0.45.2",

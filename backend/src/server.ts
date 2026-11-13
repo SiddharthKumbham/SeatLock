@@ -12,7 +12,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { attachRealtime, closeRealtime } from "./realtime.js";
 import { demoMode, frontendOrigin, isProduction, port } from "./config.js";
-import { refreshDemoSchedule } from "./seed.js";
+import { refreshDemoSchedule, seed } from "./seed.js";
+import { migrate } from "./migrate.js";
+import { safeErrorDetails } from "./diagnostics.js";
 
 export const app = express();
 if (isProduction) app.set("trust proxy", 1);
@@ -80,10 +82,18 @@ if (process.argv[1]?.endsWith("server.js")) {
     } catch (error) { console.error("Shutdown error", { code: (error as NodeJS.ErrnoException).code ?? "unknown" }); process.exitCode = 1; }
   };
   const start = async () => {
+    let stage = "database connectivity";
     try {
       await pool.query("SELECT 1");
-      if (demoMode) await refreshDemoSchedule();
+      stage = "database migrations";
+      await migrate();
+      if (demoMode) {
+        stage = "demo seed";
+        await seed();
+      }
+      stage = "realtime setup";
       io = attachRealtime(httpServer);
+      stage = "HTTP listen";
       await new Promise<void>((resolve, reject) => {
         httpServer.once("error", reject);
         httpServer.listen(port, () => { httpServer.removeListener("error", reject); resolve(); });
@@ -93,7 +103,7 @@ if (process.argv[1]?.endsWith("server.js")) {
         void refreshDemoSchedule().catch((error: unknown) => console.error("Demo schedule refresh failed", { code: (error as NodeJS.ErrnoException).code ?? "unknown" }));
       }, 6 * 60 * 60 * 1000);
     } catch (error) {
-      console.error("Startup failed", { code: (error as NodeJS.ErrnoException).code ?? "unknown", kind: error instanceof Error ? error.name : "unknown" });
+      console.error("Startup failed", { stage, ...safeErrorDetails(error) });
       process.exitCode = 1;
       await shutdown();
     }
