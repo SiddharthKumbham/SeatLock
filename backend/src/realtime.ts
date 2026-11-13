@@ -1,6 +1,7 @@
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
 import { query } from "./db.js";
+import { frontendOrigin } from "./config.js";
 
 export type AvailabilityReason = "hold_created" | "hold_released" | "booking_confirmed";
 export type AvailabilityNotice = { showtimeId: string; reason: AvailabilityReason; changedAt: string };
@@ -10,10 +11,9 @@ const room = (showtimeId: string) => `showtime:${showtimeId}`;
 const validId = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
 
 export function attachRealtime(httpServer: HttpServer) {
-  const trustedOrigin = process.env.FRONTEND_ORIGIN ?? "http://127.0.0.1:5173";
   const io = new Server(httpServer, {
-    cors: { origin: trustedOrigin, credentials: true },
-    allowRequest: (request, done) => done(null, request.headers.origin === trustedOrigin),
+    cors: { origin: frontendOrigin, credentials: true },
+    allowRequest: (request, done) => done(null, request.headers.origin === frontendOrigin),
     serveClient: false
   });
   activeServer = io;

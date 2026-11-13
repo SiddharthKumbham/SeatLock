@@ -32,8 +32,9 @@ export async function createHold(userId: string, showtimeId: string, seatIds: st
   const sorted = [...seatIds].sort((a, b) => BigInt(a) < BigInt(b) ? -1 : 1);
   const id = randomUUID();
   await transaction(async (client) => {
-    const show = await client.query<ShowRow>("SELECT id,auditorium_id,base_price FROM showtimes WHERE id=$1", [showtimeId]);
+    const show = await client.query<ShowRow & { started: boolean }>("SELECT id,auditorium_id,base_price,starts_at <= clock_timestamp() AS started FROM showtimes WHERE id=$1", [showtimeId]);
     if (!show.rows[0]) throw new BookingError(404, "Showtime not found");
+    if (show.rows[0].started) throw new BookingError(409, "Showtime has already started");
     const auditoriumId = show.rows[0].auditorium_id;
     const valid = await client.query<SeatRow>("SELECT id FROM seats WHERE auditorium_id=$1 AND id=ANY($2::bigint[])", [auditoriumId, sorted]);
     if (valid.rows.length !== sorted.length) throw new BookingError(400, "One or more seats are invalid for this showtime");
@@ -48,6 +49,8 @@ export async function createHold(userId: string, showtimeId: string, seatIds: st
         [showtimeId, auditoriumId, seatId, id, hold.rows[0].expires_at]);
       if (!claim.rowCount) throw new BookingError(409, "One or more seats are no longer available");
     }
+    const timing = await client.query<{ started: boolean }>("SELECT starts_at <= clock_timestamp() AS started FROM showtimes WHERE id=$1", [showtimeId]);
+    if (timing.rows[0].started) throw new BookingError(409, "Showtime has already started");
   });
   publishAvailability(showtimeId, "hold_created");
   const result = await holdDetails(userId, id);
@@ -92,6 +95,8 @@ export async function confirmHold(userId: string, holdId: string) {
     }
     if (hold.status === "released") throw new BookingError(409, "Hold was released");
     if (hold.effective_status === "expired") throw new BookingError(410, "Hold has expired");
+    const timing = await client.query<{ started: boolean }>("SELECT starts_at <= clock_timestamp() AS started FROM showtimes WHERE id=$1", [hold.showtime_id]);
+    if (timing.rows[0].started) throw new BookingError(409, "Showtime has already started");
     const claims = await client.query<{ seat_id: string }>(`SELECT seat_id FROM seat_claims WHERE hold_id=$1 AND state='held' ORDER BY seat_id FOR UPDATE`, [holdId]);
     if (claims.rows.length !== hold.seat_count) throw new BookingError(409, "Held seats are no longer available");
     const id = randomUUID();

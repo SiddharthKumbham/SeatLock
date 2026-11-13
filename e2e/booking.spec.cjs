@@ -8,6 +8,7 @@ const movieId = `e2e-${tag}`;
 const showtimeId = `e2e-show-${tag}`;
 const title = "THE LAST SIGNAL";
 const screenshotDir = path.join(__dirname, "..", "docs", "screenshots");
+const capturePortfolioScreenshots = process.env.CAPTURE_SCREENSHOTS === "true";
 const emails = [`demo.guest.${tag.slice(0, 8)}@example.test`, `demo.viewer.${tag.slice(0, 8)}@example.test`];
 const password = `Test-only-${randomUUID()}!`;
 let pool;
@@ -63,7 +64,7 @@ async function openShowtime(page, capture = false) {
 }
 
 test("two browser contexts see holds and bookings, with refresh recovery", async ({ browser }) => {
-  fs.mkdirSync(screenshotDir, { recursive: true });
+  if (capturePortfolioScreenshots) fs.mkdirSync(screenshotDir, { recursive: true });
   const contextA = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const contextB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pageA = await contextA.newPage();
@@ -71,17 +72,17 @@ test("two browser contexts see holds and bookings, with refresh recovery", async
   try {
     await pageA.goto("/");
     await expect(pageA.getByRole("button", { name: "View AFTERLIGHT details" })).toBeVisible();
-    await pageA.screenshot({ path: path.join(screenshotDir, "01-homepage.png") });
+    if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "01-homepage.png") });
     await pageA.locator("#films").scrollIntoViewIfNeeded();
     await pageA.setViewportSize({ width: 1440, height: 720 });
-    await pageA.screenshot({ path: path.join(screenshotDir, "02-movie-catalog.png"), clip: { x: 0, y: 0, width: 1440, height: 620 } });
+    if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "02-movie-catalog.png"), clip: { x: 0, y: 0, width: 1440, height: 620 } });
     await pageA.setViewportSize({ width: 1440, height: 900 });
     await register(pageA, emails[0]);
     await register(pageB, emails[1]);
-    await openShowtime(pageA, true);
+    await openShowtime(pageA, capturePortfolioScreenshots);
     await openShowtime(pageB);
     await pageA.getByRole("button", { name: "Seat A1, available" }).click();
-    await pageA.screenshot({ path: path.join(screenshotDir, "04-seat-selection.png") });
+    if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "04-seat-selection.png") });
     await pageA.getByRole("button", { name: "Seat A1, selected" }).click();
     await pageA.getByRole("button", { name: "Seat A1, available" }).click();
     await pageA.getByRole("button", { name: "Hold seats for 5 minutes" }).click();
@@ -103,7 +104,7 @@ test("two browser contexts see holds and bookings, with refresh recovery", async
     await pageA.getByRole("button", { name: "Hold seats for 5 minutes" }).click();
     await pageA.getByRole("button", { name: /Demo Confirmation — No Payment Charged/ }).click();
     await expect(pageA.getByText("You're on the list.")).toBeVisible();
-    await pageA.screenshot({ path: path.join(screenshotDir, "05-demo-confirmation.png") });
+    if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "05-demo-confirmation.png") });
     await expect(pageB.getByRole("button", { name: "Seat A2, booked" })).toBeDisabled({ timeout: 4000 });
     await contextB.setOffline(true);
     await expect(pageB.getByText("RECONNECTING · POLLING BACKUP")).toBeVisible();
@@ -114,7 +115,7 @@ test("two browser contexts see holds and bookings, with refresh recovery", async
     await pageA.getByRole("button", { name: "View your bookings" }).click();
     await expect(pageA.getByText(title)).toBeVisible();
     await expect(pageA.getByText("DEMO CONFIRMATION — NO PAYMENT CHARGED")).toBeVisible();
-    await pageA.screenshot({ path: path.join(screenshotDir, "06-dashboard.png") });
+    if (capturePortfolioScreenshots) await pageA.screenshot({ path: path.join(screenshotDir, "06-dashboard.png") });
     await pageA.getByRole("button", { name: "Log out" }).first().click();
     await expect(pageA.getByRole("link", { name: "Log in" })).toBeVisible();
     await pageA.goto("/login");

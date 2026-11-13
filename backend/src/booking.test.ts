@@ -152,3 +152,22 @@ test("parallel hold-to-confirm workflows cannot double-book one physical seat", 
   assert.equal((await pool.query("SELECT 1 FROM seat_claims WHERE showtime_id=$1 AND seat_id=$2 AND state='booked'", [showtimeId, seats[7]])).rowCount, 1);
   console.log("CONCURRENCY 20 hold-to-confirm workflows: 1 confirmed booking, 19 conflicts");
 });
+test("started showtimes reject new holds and confirmation", async () => {
+  const pastId = `past-${tag}`;
+  const crossingId = `crossing-${tag}`;
+  await pool.query("INSERT INTO showtimes(id,movie_id,auditorium_id,starts_at,base_price,format) VALUES ($1,'afterlight',$2,clock_timestamp()-interval '1 hour',10,'STANDARD')", [pastId, auditoriumId]);
+  await pool.query("INSERT INTO showtimes(id,movie_id,auditorium_id,starts_at,base_price,format) VALUES ($1,'afterlight',$2,clock_timestamp()+interval '1 hour',10,'STANDARD')", [crossingId, auditoriumId]);
+  try {
+    assert.equal((await post("/api/holds", { showtimeId: pastId, seatIds: [seats[0]] }, cookies[0])).status, 409);
+    const response = await post("/api/holds", { showtimeId: crossingId, seatIds: [seats[0]] }, cookies[0]);
+    assert.equal(response.status, 201);
+    const created = await data(response);
+    await pool.query("UPDATE showtimes SET starts_at=clock_timestamp()-interval '1 minute' WHERE id=$1", [crossingId]);
+    assert.equal((await post(`/api/holds/${created.id}/confirm`, {}, cookies[0])).status, 409);
+    assert.equal((await release(created.id, cookies[0])).status, 204);
+  } finally {
+    await pool.query("DELETE FROM seat_claims WHERE showtime_id=ANY($1::text[])", [[pastId, crossingId]]);
+    await pool.query("DELETE FROM seat_holds WHERE showtime_id=ANY($1::text[])", [[pastId, crossingId]]);
+    await pool.query("DELETE FROM showtimes WHERE id=ANY($1::text[])", [[pastId, crossingId]]);
+  }
+});

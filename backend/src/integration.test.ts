@@ -26,11 +26,12 @@ test("catalog and movie details return seeded rows", async () => {
   assert.equal(catalog.data.length, 4);
   assert.equal(catalog.source, "postgresql");
   const detail = await (await fetch(`${base}/api/movies/afterlight`)).json();
-  assert.equal(detail.data.showtimes.length, 4);
+  assert.ok(detail.data.showtimes.some((show: { id: string }) => show.id === "a1"));
+  assert.ok(detail.data.showtimes.some((show: { id: string }) => show.id.startsWith("demo-a1-")));
 });
 test("showtimes and physical seats are joined to their movie and auditorium", async () => {
   const shows = await (await fetch(`${base}/api/showtimes?movieId=afterlight`)).json();
-  assert.equal(shows.data.length, 4);
+  assert.ok(shows.data.length >= 8);
   const seats = await (await fetch(`${base}/api/showtimes/${shows.data[0].id}/seats`)).json();
   assert.equal(seats.data.seats.length, 40);
   assert.equal(seats.data.seats[0].label, "A1");
